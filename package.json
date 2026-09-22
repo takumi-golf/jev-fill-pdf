@@ -1,0 +1,22 @@
+{
+  "name": "jev-fill-pdf",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Fill Japanese PDF forms in one click with Jev by TypeSafe AI. Labels go to Jev; your values never leave the browser.",
+  "license": "MIT",
+  "scripts": {
+    "inspect": "node scripts/inspect-form.mjs",
+    "fill": "node scripts/fill-acroform.mjs",
+    "ocr": "node scripts/ocr-labels.mjs",
+    "flat": "node scripts/flat-boxes.mjs"
+  },
+  "dependencies": {
+    "@jspawn/qpdf-wasm": "0.0.2",
+    "@napi-rs/canvas": "^0.1.60",
+    "@pdf-lib/fontkit": "1.1.1",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "4.10.38",
+    "tesseract.js": "7.0.0"
+  }
+}
