@@ -46,7 +46,7 @@
   .kv label{font-size:12px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .kv button{padding:0;width:26px;height:26px;border-radius:6px}
   .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .stage{padding:14px;overflow:auto;min-width:0;min-height:0;overscroll-behavior:contain;touch-action:pan-x pan-y}
+  .stage{padding:14px;overflow:auto;min-width:0;min-height:0} /* overscroll-behavior:contain を付けるとスマホで紙の上から縦に戻れなくなる（owner 報告 2026-09-22） */
   .drop{border:2px dashed var(--line);border-radius:14px;background:var(--paper);min-height:52vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;cursor:pointer}
   .drop h3{margin:0 0 6px;font-size:20px}
   .drop p{margin:4px 0;color:var(--mute)}
@@ -63,7 +63,6 @@
   .pagebar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--mute);flex-wrap:wrap}
   .pagebar .grow{flex:1}
   .pagebar select{width:auto;padding:3px 6px;font-size:12px;border-radius:6px}
-  .pagewrap{transform-origin:0 0}
   .legend{display:flex;gap:10px;font-size:12px;margin:10px 0 0;color:var(--mute)}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
   .legend .lg{background:var(--g)}.legend .ly{background:var(--y)}.legend .ln{background:var(--n)}
@@ -97,7 +96,7 @@
 </head>
 <body>
 <header>
-  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.2.1</span>
+  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.2.2</span>
   <a class="ver" href="https://github.com/takumi-golf/jev-fill-pdf" target="_blank" rel="noopener">ソース →</a>
   <span class="grow"></span>
   <button id="btn-lang" class="small" title="Language">EN</button>
@@ -164,7 +163,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 if (!window.PDFLib || !window.fontkit) { const st = document.getElementById("status"); st.textContent = "部品（pdf-lib / fontkit）を読み込めませんでした。ネットワークを確認して再読み込みしてください。"; st.classList.add("show"); throw new Error("libraries not loaded"); }
 const { PDFDocument } = PDFLib;
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 const HOST = "https://ilove-ai.net";
 const FONT_PATH = "/pdf/fonts/NotoSansJP-Regular.subset.otf";
 const FONT_URLS = location.protocol === "file:" ? [HOST + FONT_PATH] : [FONT_PATH, HOST + FONT_PATH];
@@ -400,11 +399,7 @@ $("#zoom-out").addEventListener("click", () => zoomStep(-1));
 $("#zoom-sel").addEventListener("change", (e) => setZoom(e.target.value === "fit" ? "fit" : parseFloat(e.target.value)));
 $(".stage").addEventListener("wheel", (e) => { if (!(e.ctrlKey || e.metaKey) || !state.pdf) return; e.preventDefault(); const r = $(".stage").getBoundingClientRect(); const anchor = { x: e.clientX - r.left, y: e.clientY - r.top }; setZoom(state.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1), anchor); }, { passive: false });
 document.addEventListener("keydown", (e) => { if (!(e.ctrlKey || e.metaKey) || !state.pdf) return; if (e.key === "+" || e.key === "=" ) { e.preventDefault(); zoomStep(1); } else if (e.key === "-") { e.preventDefault(); zoomStep(-1); } else if (e.key === "0") { e.preventDefault(); setZoom("fit"); } });
-/* スマホの 2 本指: 動かしている間は CSS で見せ、離したときに描き直す */
-let pinch = null;
-$(".stage").addEventListener("touchstart", (e) => { if (e.touches.length === 2) { const [a, b] = e.touches; pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), s0: state.scale, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; } }, { passive: true });
-$(".stage").addEventListener("touchmove", (e) => { if (!pinch || e.touches.length !== 2) return; e.preventDefault(); const [a, b] = e.touches; const k = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d0; pinch.k = k; $("#pagewrap").style.transform = `scale(${k})`; }, { passive: false });
-$(".stage").addEventListener("touchend", () => { if (!pinch) return; const k = pinch.k || 1; $("#pagewrap").style.transform = ""; const r = $(".stage").getBoundingClientRect(); const anchor = { x: pinch.cx - r.left, y: pinch.cy - r.top }; const s0 = pinch.s0; pinch = null; if (Math.abs(k - 1) > 0.02) setZoom(s0 * k, anchor); });
+/* スマホの 2 本指はブラウザに任せる（自作のピンチはブラウザのピンチと同時に動いて縮尺が壊れた・owner 報告 2026-09-22）。描き直しの倍率は −／＋と選択で */
 async function renderPage() {
   const pg = state.pages[state.cur]; const cv = $("#cv");
     state.scale = currentScale(pg); syncZoomUi();
