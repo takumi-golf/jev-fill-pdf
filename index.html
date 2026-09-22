@@ -24,6 +24,7 @@
   *{box-sizing:border-box}
   [hidden]{display:none !important} /* .drop の display:flex が hidden 属性より強く効いて、読み込み後もドロップ枠が残っていた（owner 報告 2026-09-22） */
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif}
+  body{display:flex;flex-direction:column}
   a{color:inherit}
   button{font:inherit;color:inherit;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
   button:disabled{opacity:.45;cursor:default}
@@ -34,8 +35,8 @@
   header h1{font-size:16px;margin:0;font-weight:700}
   header .ver{font-size:11px;color:var(--mute)}
   header .grow{flex:1}
-  main{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:calc(100% - 49px)}
-  aside{border-right:1px solid var(--line);background:var(--paper);padding:14px;overflow:auto}
+  main{display:grid;grid-template-columns:320px minmax(0,1fr);grid-template-rows:minmax(0,1fr);flex:1;min-height:0}
+  aside{border-right:1px solid var(--line);background:var(--paper);padding:14px;overflow:auto;min-height:0} /* 左は画面に固定し、中身だけスクロール（owner 要望 2026-09-22） */
   section.step{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
   section.step h2{font-size:13px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
   section.step h2 .num{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--acc);color:#fff;align-items:center;justify-content:center;font-size:11px}
@@ -45,7 +46,7 @@
   .kv label{font-size:12px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .kv button{padding:0;width:26px;height:26px;border-radius:6px}
   .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .stage{padding:14px;overflow:auto;min-width:0}
+  .stage{padding:14px;overflow:auto;min-width:0;min-height:0;overscroll-behavior:contain;touch-action:pan-x pan-y}
   .drop{border:2px dashed var(--line);border-radius:14px;background:var(--paper);min-height:52vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;cursor:pointer}
   .drop h3{margin:0 0 6px;font-size:20px}
   .drop p{margin:4px 0;color:var(--mute)}
@@ -59,7 +60,10 @@
   .fld.y{border-color:var(--y);background:rgba(138,97,0,.16);color:var(--y)}
   .fld.sel{outline:3px solid #2f6dff;outline-offset:1px}
   .fld.check{border-radius:4px}
-  .pagebar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--mute)}
+  .pagebar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--mute);flex-wrap:wrap}
+  .pagebar .grow{flex:1}
+  .pagebar select{width:auto;padding:3px 6px;font-size:12px;border-radius:6px}
+  .pagewrap{transform-origin:0 0}
   .legend{display:flex;gap:10px;font-size:12px;margin:10px 0 0;color:var(--mute)}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
   .legend .lg{background:var(--g)}.legend .ly{background:var(--y)}.legend .ln{background:var(--n)}
@@ -80,12 +84,12 @@
   .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--nbg);color:var(--mute)}
   .pill.g{background:var(--gbg);color:var(--g)}.pill.y{background:var(--ybg);color:var(--y)}
   footer{font-size:11px;color:var(--mute);padding:10px 16px;border-top:1px solid var(--line)}
-  @media (max-width:860px){main{grid-template-columns:minmax(0,1fr)}aside{border-right:0;border-bottom:1px solid var(--line)}.drop{min-height:36vh}}
+  @media (max-width:860px){main{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;overflow:auto}aside{border-right:0;border-bottom:1px solid var(--line);overflow:visible}.drop{min-height:36vh}}
 </style>
 </head>
 <body>
 <header>
-  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.1.3</span>
+  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.2.0</span>
   <a class="ver" href="https://github.com/takumi-golf/jev-fill-pdf" target="_blank" rel="noopener">ソース →</a>
   <span class="grow"></span>
   <button id="btn-lang" class="small" title="Language">EN</button>
@@ -124,7 +128,7 @@
       <p data-t="drop3">値はアップロードしません。欄のラベルだけを判定に送ります</p>
     </div>
     <div id="view" hidden>
-      <div class="pagebar"><button id="prev" class="small">←</button><span id="pageno">1 / 1</span><button id="next" class="small">→</button><span id="kind" class="pill"></span><span id="fields-count"></span></div>
+      <div class="pagebar"><button id="prev" class="small">←</button><span id="pageno">1 / 1</span><button id="next" class="small">→</button><span id="kind" class="pill"></span><span id="fields-count"></span><span class="grow"></span><button id="zoom-out" class="small" title="縮小 (Ctrl+-)">−</button><select id="zoom-sel" title="倍率"><option value="fit" data-t="zoomFit">幅に合わせる</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select><button id="zoom-in" class="small" title="拡大 (Ctrl++)">+</button></div>
       <div class="pagewrap" id="pagewrap"><canvas id="cv"></canvas><div class="overlay" id="ov"></div><div id="pick"></div></div>
       <div class="legend"><span><i class="lg"></i><span data-t="lg">自動で入れた（確率 0.8 以上）</span></span><span><i class="ly"></i><span data-t="ly">入れたが確認して（0.5〜0.8）</span></span><span><i class="ln"></i><span data-t="ln">空欄・タップして選ぶ</span></span></div>
     </div>
@@ -152,7 +156,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 if (!window.PDFLib || !window.fontkit) { const st = document.getElementById("status"); st.textContent = "部品（pdf-lib / fontkit）を読み込めませんでした。ネットワークを確認して再読み込みしてください。"; st.classList.add("show"); throw new Error("libraries not loaded"); }
 const { PDFDocument } = PDFLib;
 
-const VERSION = "0.1.3";
+const VERSION = "0.2.0";
 const HOST = "https://ilove-ai.net";
 const FONT_PATH = "/pdf/fonts/NotoSansJP-Regular.subset.otf";
 const FONT_URLS = location.protocol === "file:" ? [HOST + FONT_PATH] : [FONT_PATH, HOST + FONT_PATH];
@@ -180,7 +184,7 @@ const I18N = {
   drop1: ["ここに様式のPDFをドロップ", "Drop the form PDF here"], drop2: ["または タップして選ぶ", "or tap to choose"], drop3: ["値はアップロードしません。欄のラベルだけを判定に送ります", "Your values are never uploaded. Only field labels go out for matching."],
   lg: ["自動で入れた（確率 0.8 以上）", "Filled (probability ≥ 0.8)"], ly: ["入れたが確認して（0.5〜0.8）", "Filled, please check (0.5–0.8)"], ln: ["空欄・タップして選ぶ", "Blank, tap to pick"],
   foot: ["できないこと: スキャンの傾き補正・手書き様式・XFA・縦書きの記入。判定は確率であり、記入内容の確認はあなたが行います。", "Not supported: skew correction, handwritten forms, XFA, vertical writing into fields. Matching is probabilistic; you verify the result."],
-  sib: ["姉妹ツール: ジェネリックPDF", "Sibling tool: generic-pdf"],
+  sib: ["姉妹ツール: ジェネリックPDF", "Sibling tool: generic-pdf"], zoomFit: ["幅に合わせる", "Fit width"],
   dlgTitle: ["これを送ります", "This is what will be sent"], dlgNote: ["欄ごとの「近くの文字」と、あなたの情報の「項目名」だけです。値は含まれません。", "Only the text near each field and the names of your items. No values."],
   thField: ["欄", "Field"], thFrag: ["近くの文字（断片）", "Nearby text (fragments)"], dlgKeys: ["項目名:", "Item names:"], cancel: ["やめる", "Cancel"], send: ["送って判定する", "Send and match"],
   loading: ["読み込んでいます…", "Loading…"], decrypting: ["保護を外しています…", "Removing protection…"], analyzing: ["欄を調べています…", "Analyzing fields…"],
@@ -211,7 +215,7 @@ function status(msg, ms = 2500) { const el = $("#status"); clearTimeout(statusTi
 
 /* ───────── 状態 ───────── */
 const state = {
-  name: "", bytes: null, hash: "", fp: "", pdf: null, pages: [], kind: "", cur: 0, scale: 1,
+  name: "", bytes: null, hash: "", fp: "", pdf: null, pages: [], kind: "", cur: 0, scale: 1, zoom: "fit", // zoom: "fit" か倍率（1 = 1pt が 1px）
   fields: [], // {id, page, type:"text"|"check", name, rect:{x,y,w,h} PDF座標(y上向き), multiline, fragments:[], key:null, p:0, src:"" }
   profile: [], // {key, label, value}
   fontBytes: null, fontFull: null, fk: null, ocr: { loaded: false, lines: {} }, preset: null, jevDisabled: "",
@@ -366,10 +370,36 @@ function rememberMapping() { try { const m = {}; for (const f of state.fields) i
 
 /* ───────── 表示 ───────── */
 let renderTask = null;
+/* 拡大縮小。「幅に合わせる」はスマホで巨大な様式（2481pt 幅の国税庁様式など）が読めなくならないよう 0.5 を下限にし、はみ出す分は横にパンする */
+const ZOOM_MIN = 0.2, ZOOM_MAX = 4;
+function fitScale(pg) { const maxW = Math.max(320, $(".stage").clientWidth - 32); return Math.max(0.5, Math.min(1.4, maxW / pg.vp.width)); }
+function currentScale(pg) { return state.zoom === "fit" ? fitScale(pg) : state.zoom; }
+function syncZoomUi() { const sel = $("#zoom-sel"); const fitOpt = sel.querySelector('option[value="fit"]'); fitOpt.textContent = `${t("zoomFit")} (${Math.round((state.zoom === "fit" ? state.scale : fitScale(state.pages[state.cur])) * 100)}%)`; if (state.zoom === "fit") sel.value = "fit"; else { const v = String(state.zoom); if ([...sel.options].some((o) => o.value === v)) sel.value = v; else { let o = sel.querySelector("option[data-custom]"); if (!o) { o = document.createElement("option"); o.dataset.custom = "1"; sel.appendChild(o); } o.value = v; o.textContent = Math.round(state.zoom * 100) + "%"; sel.value = v; } } }
+/* anchor: 拡大の基準点（stage 内の座標）。省略時は表示範囲の中央。描画後にその点が同じ場所に来るようスクロールを直す */
+async function setZoom(z, anchor) {
+  const stage = $(".stage"); const pg = state.pages[state.cur]; if (!pg) return;
+  const before = state.scale; const next = z === "fit" ? "fit" : Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  const ax = anchor ? anchor.x : stage.clientWidth / 2, ay = anchor ? anchor.y : stage.clientHeight / 2;
+  const wrapTop = $("#pagewrap").offsetTop, wrapLeft = $("#pagewrap").offsetLeft;
+  const px = (stage.scrollLeft + ax - wrapLeft) / before, py = (stage.scrollTop + ay - wrapTop) / before; // 基準点の紙上の座標（pt）
+  state.zoom = next; await renderPage();
+  const after = state.scale;
+  stage.scrollLeft = px * after + wrapLeft - ax; stage.scrollTop = py * after + wrapTop - ay;
+}
+function zoomStep(dir, anchor) { const steps = [0.25, 0.5, 0.75, 1, 1.5, 2, 3]; const cur = state.scale; let z; if (dir > 0) z = steps.find((v) => v > cur + 0.01) ?? Math.min(ZOOM_MAX, cur * 1.25); else z = [...steps].reverse().find((v) => v < cur - 0.01) ?? Math.max(ZOOM_MIN, cur / 1.25); setZoom(z, anchor); }
+$("#zoom-in").addEventListener("click", () => zoomStep(1));
+$("#zoom-out").addEventListener("click", () => zoomStep(-1));
+$("#zoom-sel").addEventListener("change", (e) => setZoom(e.target.value === "fit" ? "fit" : parseFloat(e.target.value)));
+$(".stage").addEventListener("wheel", (e) => { if (!(e.ctrlKey || e.metaKey) || !state.pdf) return; e.preventDefault(); const r = $(".stage").getBoundingClientRect(); const anchor = { x: e.clientX - r.left, y: e.clientY - r.top }; setZoom(state.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1), anchor); }, { passive: false });
+document.addEventListener("keydown", (e) => { if (!(e.ctrlKey || e.metaKey) || !state.pdf) return; if (e.key === "+" || e.key === "=" ) { e.preventDefault(); zoomStep(1); } else if (e.key === "-") { e.preventDefault(); zoomStep(-1); } else if (e.key === "0") { e.preventDefault(); setZoom("fit"); } });
+/* スマホの 2 本指: 動かしている間は CSS で見せ、離したときに描き直す */
+let pinch = null;
+$(".stage").addEventListener("touchstart", (e) => { if (e.touches.length === 2) { const [a, b] = e.touches; pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), s0: state.scale, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; } }, { passive: true });
+$(".stage").addEventListener("touchmove", (e) => { if (!pinch || e.touches.length !== 2) return; e.preventDefault(); const [a, b] = e.touches; const k = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d0; pinch.k = k; $("#pagewrap").style.transform = `scale(${k})`; }, { passive: false });
+$(".stage").addEventListener("touchend", () => { if (!pinch) return; const k = pinch.k || 1; $("#pagewrap").style.transform = ""; const r = $(".stage").getBoundingClientRect(); const anchor = { x: pinch.cx - r.left, y: pinch.cy - r.top }; const s0 = pinch.s0; pinch = null; if (Math.abs(k - 1) > 0.02) setZoom(s0 * k, anchor); });
 async function renderPage() {
   const pg = state.pages[state.cur]; const cv = $("#cv");
-  // 幅に合わせるが、スマホで巨大な様式（2481pt 幅の国税庁様式など）が読めなくならないよう縮尺は 0.5 を下限にし、はみ出す分は横にパンする
-  const maxW = Math.max(320, $(".stage").clientWidth - 32); state.scale = Math.max(0.5, Math.min(1.4, maxW / pg.vp.width));
+    state.scale = currentScale(pg); syncZoomUi();
   const vp = pg.page.getViewport({ scale: state.scale }); const dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = Math.floor(vp.width * dpr); cv.height = Math.floor(vp.height * dpr); cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
   $("#pagewrap").style.width = vp.width + "px"; $("#pagewrap").style.height = vp.height + "px";
@@ -430,7 +460,7 @@ function refreshOverlay() {
 function statsText() { const tx = state.fields.filter((f) => f.type === "text"); const g = tx.filter((f) => tierOf(f) === "g").length, y = tx.filter((f) => tierOf(f) === "y").length; return tx.length ? t("jevDone", { g, y, n: tx.length - g - y }) : ""; }
 $("#prev").addEventListener("click", () => { if (state.cur > 0) { state.cur--; renderPage(); } });
 $("#next").addEventListener("click", () => { if (state.cur < state.pages.length - 1) { state.cur++; renderPage(); } });
-window.addEventListener("resize", () => { if (state.pdf) renderPage(); });
+window.addEventListener("resize", () => { if (state.pdf && state.zoom === "fit") renderPage(); });
 
 /* 欄をタップ → 項目を選ぶ */
 function openPick(f, el) {
