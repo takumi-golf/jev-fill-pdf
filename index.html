@@ -84,7 +84,7 @@
 </head>
 <body>
 <header>
-  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.1.1</span>
+  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.1.2</span>
   <a class="ver" href="https://github.com/takumi-golf/jev-fill-pdf" target="_blank" rel="noopener">ソース →</a>
   <span class="grow"></span>
   <button id="btn-lang" class="small" title="Language">EN</button>
@@ -151,7 +151,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 if (!window.PDFLib || !window.fontkit) { const st = document.getElementById("status"); st.textContent = "部品（pdf-lib / fontkit）を読み込めませんでした。ネットワークを確認して再読み込みしてください。"; st.classList.add("show"); throw new Error("libraries not loaded"); }
 const { PDFDocument } = PDFLib;
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const HOST = "https://ilove-ai.net";
 const FONT_PATH = "/pdf/fonts/NotoSansJP-Regular.subset.otf";
 const FONT_URLS = location.protocol === "file:" ? [HOST + FONT_PATH] : [FONT_PATH, HOST + FONT_PATH];
@@ -392,7 +392,17 @@ function parseDate(v) {
 }
 function eraOf(dt) { for (const [name, y, mo, d] of ERAS) { if (dt.y > y || (dt.y === y && (dt.mo > mo || (dt.mo === mo && dt.d >= d)))) return { era: name, ey: dt.y - y + 1 }; } return null; }
 function derive(base, part) {
-  if (/^[123]$/.test(part)) { const parts = String(base || "").split(/[-‐－ー–—ｰ\s]+/).filter(Boolean); return parts[+part - 1] || ""; }
+  if (/^[123]$/.test(part)) {
+    const raw = String(base || "").trim();
+    let parts = raw.split(/[-‐－ー–—ｰ\s()（）]+/).filter(Boolean);
+    if (parts.length === 1 && /^\d+$/.test(raw)) { // ハイフン無し: 郵便番号 7 桁は 3+4、電話は 0[789]0 なら 3+4+4、市外局番 2 桁（03/06）なら 2+4+4、それ以外は 3+3+4
+      const d = raw;
+      if (d.length === 7) parts = [d.slice(0, 3), d.slice(3)];
+      else if (d.length === 11) parts = [d.slice(0, 3), d.slice(3, 7), d.slice(7)];
+      else if (d.length === 10) parts = /^0[36]/.test(d) ? [d.slice(0, 2), d.slice(2, 6), d.slice(6)] : [d.slice(0, 3), d.slice(3, 6), d.slice(6)];
+    }
+    return parts[+part - 1] || "";
+  }
   const dt = parseDate(base); if (!dt) return "";
   if (part === "y") return String(dt.y); if (part === "m") return String(dt.mo); if (part === "d") return String(dt.d);
   const er = eraOf(dt); if (!er) return ""; if (part === "era") return er.era; if (part === "ey") return String(er.ey); return "";
@@ -516,7 +526,9 @@ async function fillAndSave() {
     status(t("building"), 0);
     const doc = await PDFDocument.load(state.bytes, { ignoreEncryption: true, updateMetadata: false }); doc.registerFontkit(fontkit);
     const allText = todo.filter((f) => f.type === "text").map(valueOf).join("");
-    const font = allText && !isAscii(allText) ? await doc.embedFont(await fontFor(allText), { subset: true }) : null; // 描くものがあるときだけ埋め込む
+    // 描くものがあるときだけ埋め込む。subset は false: pdf-lib/fontkit の部分埋め込みは日本語フォントで壊れたサブセットを作り、
+    // pdf.js では読めるのに Chrome（PDFium）・Acrobat・poppler では日本語が消える（2026-09-22 実測・owner 報告）。全体埋め込みは +1.5MB だが全ビューアで出る
+    const font = allText && !isAscii(allText) ? await doc.embedFont(await fontFor(allText), { subset: false }) : null;
     const widgets = todo.filter((f) => !f.virtual), virtuals = todo.filter((f) => f.virtual);
     if (widgets.length) {
       const form = doc.getForm();
