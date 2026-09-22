@@ -84,12 +84,20 @@
   .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--nbg);color:var(--mute)}
   .pill.g{background:var(--gbg);color:var(--g)}.pill.y{background:var(--ybg);color:var(--y)}
   footer{font-size:11px;color:var(--mute);padding:10px 16px;border-top:1px solid var(--line)}
-  @media (max-width:860px){main{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;overflow:auto}aside{border-right:0;border-bottom:1px solid var(--line);overflow:visible}.drop{min-height:36vh}}
+  /* スマホ: 左の固定はやめて普通の縦の流れに戻す。本体の高さを画面に固定したままだと、min-height:0 の 2 行が均等に割られて左の入力欄が紙に重なる（owner 報告 2026-09-22） */
+  @media (max-width:860px){
+    body{display:block}
+    main{display:block;flex:none;height:auto;min-height:0;overflow:visible}
+    aside{border-right:0;border-bottom:1px solid var(--line);overflow:visible;min-height:auto;height:auto}
+    .stage{min-height:auto;height:auto;overflow:auto}
+    .drop{min-height:36vh}
+    .pagebar{position:sticky;top:0;background:var(--bg);z-index:2;padding:6px 0}
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.2.0</span>
+  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.2.1</span>
   <a class="ver" href="https://github.com/takumi-golf/jev-fill-pdf" target="_blank" rel="noopener">ソース →</a>
   <span class="grow"></span>
   <button id="btn-lang" class="small" title="Language">EN</button>
@@ -156,7 +164,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 if (!window.PDFLib || !window.fontkit) { const st = document.getElementById("status"); st.textContent = "部品（pdf-lib / fontkit）を読み込めませんでした。ネットワークを確認して再読み込みしてください。"; st.classList.add("show"); throw new Error("libraries not loaded"); }
 const { PDFDocument } = PDFLib;
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const HOST = "https://ilove-ai.net";
 const FONT_PATH = "/pdf/fonts/NotoSansJP-Regular.subset.otf";
 const FONT_URLS = location.protocol === "file:" ? [HOST + FONT_PATH] : [FONT_PATH, HOST + FONT_PATH];
