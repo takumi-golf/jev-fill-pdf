@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ジェネリック記入 — 様式のPDFに、自分の情報を一度で。Jev で欄を判定、値はブラウザから出ない</title>
+<meta name="description" content="役所・銀行の申請書PDFを放り込むと、保存した自分の情報が全部の欄に入ります。欄の判定は TypeSafe AI の Jev。送るのは欄のラベルだけで、名前や住所はブラウザから出ません。国税庁の様式にも対応。">
+<meta property="og:title" content="ジェネリック記入 — 様式のPDFに、自分の情報を一度で">
+<meta property="og:description" content="欄の判定は Jev。送るのはラベルだけ、値はブラウザから出ない。">
+<meta property="og:image" content="https://ilove-ai.net/fill/og.png">
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<!--
+  ジェネリック記入 / jev-fill-pdf — 1ファイルのクライアント（このHTML）＋ 薄い中継（/api/fill/map・Jev を Vercel AI Gateway 経由で呼ぶ）
+  線:
+  - 中継に送るのは「欄の近くの文字の断片」と「あなたの情報の項目名」だけ。値（名前・住所・番号）はこのブラウザから出ない
+  - 送る前に、送るものを一覧で見せる。押すまで送らない
+  - 確率 0.8 以上は入れて緑、0.5〜0.8 は入れて黄色で確認、それ未満は空欄のまま「タップして選ぶ」
+  - 覚えるのは欄と項目の対応（様式ごと）。値は「この端末に保存」を自分で ON にしたときだけ localStorage
+  ソース: https://github.com/takumi-golf/jev-fill-pdf
+-->
+<style>
+  :root{--bg:#f4f4f2;--paper:#fff;--ink:#141414;--mute:#6b6b6b;--line:#dcdcd8;--acc:#111;--g:#0f7b3a;--gbg:#e6f4ea;--y:#8a6100;--ybg:#fff4d6;--n:#777;--nbg:#ececec;--r:#a12525}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif}
+  a{color:inherit}
+  button{font:inherit;color:inherit;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--acc);color:#fff;border-color:var(--acc)}
+  button.small{padding:4px 8px;font-size:12px;border-radius:6px}
+  input[type=text],select,textarea{font:inherit;width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--paper)}
+  header h1{font-size:16px;margin:0;font-weight:700}
+  header .ver{font-size:11px;color:var(--mute)}
+  header .grow{flex:1}
+  main{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:calc(100% - 49px)}
+  aside{border-right:1px solid var(--line);background:var(--paper);padding:14px;overflow:auto}
+  section.step{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+  section.step h2{font-size:13px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+  section.step h2 .num{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--acc);color:#fff;align-items:center;justify-content:center;font-size:11px}
+  .note{font-size:12px;color:var(--mute);margin:6px 0 0}
+  .warn{font-size:12px;background:var(--ybg);color:var(--y);border-radius:8px;padding:8px 10px;margin-top:8px}
+  .kv{display:grid;grid-template-columns:96px 1fr 26px;gap:6px;align-items:center;margin:4px 0}
+  .kv label{font-size:12px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kv button{padding:0;width:26px;height:26px;border-radius:6px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .stage{padding:14px;overflow:auto;min-width:0}
+  .drop{border:2px dashed var(--line);border-radius:14px;background:var(--paper);min-height:52vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;cursor:pointer}
+  .drop h3{margin:0 0 6px;font-size:20px}
+  .drop p{margin:4px 0;color:var(--mute)}
+  .drop.over{background:#eef3ff;border-color:#8ea5ff}
+  .pagewrap{position:relative;display:inline-block;background:var(--paper);box-shadow:0 1px 6px rgba(0,0,0,.12);margin:0 auto}
+  .pagewrap canvas{display:block}
+  .overlay{position:absolute;inset:0}
+  .fld{position:absolute;border:1.5px solid var(--n);background:rgba(120,120,120,.10);border-radius:3px;cursor:pointer;font-size:10px;line-height:1.1;overflow:hidden;color:var(--n)}
+  .fld .tag{position:absolute;left:0;top:0;background:inherit;padding:1px 4px;font-weight:600;white-space:nowrap;max-width:100%;text-overflow:ellipsis;overflow:hidden}
+  .fld.g{border-color:var(--g);background:rgba(15,123,58,.14);color:var(--g)}
+  .fld.y{border-color:var(--y);background:rgba(138,97,0,.16);color:var(--y)}
+  .fld.sel{outline:3px solid #2f6dff;outline-offset:1px}
+  .fld.check{border-radius:4px}
+  .pagebar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--mute)}
+  .legend{display:flex;gap:10px;font-size:12px;margin:10px 0 0;color:var(--mute)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  .legend .lg{background:var(--g)}.legend .ly{background:var(--y)}.legend .ln{background:var(--n)}
+  #pick{position:absolute;z-index:5;background:var(--paper);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;width:260px;display:none}
+  #pick .frag{font-size:11px;color:var(--mute);margin:0 0 6px;word-break:break-all}
+  #pick .p{font-size:11px;color:var(--mute)}
+  dialog{border:1px solid var(--line);border-radius:14px;padding:0;max-width:640px;width:calc(100% - 32px)}
+  dialog::backdrop{background:rgba(0,0,0,.35)}
+  dialog .body{padding:18px 20px}
+  dialog h3{margin:0 0 8px;font-size:16px}
+  dialog table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
+  dialog td,dialog th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+  dialog .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+  #status{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 14px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw}
+  #status.show{opacity:1}
+  .sr{position:absolute;left:-9999px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--nbg);color:var(--mute)}
+  .pill.g{background:var(--gbg);color:var(--g)}.pill.y{background:var(--ybg);color:var(--y)}
+  footer{font-size:11px;color:var(--mute);padding:10px 16px;border-top:1px solid var(--line)}
+  @media (max-width:860px){main{grid-template-columns:minmax(0,1fr)}aside{border-right:0;border-bottom:1px solid var(--line)}.drop{min-height:36vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="t-title">ジェネリック記入</h1><span class="ver">v0.1.1</span>
+  <a class="ver" href="https://github.com/takumi-golf/jev-fill-pdf" target="_blank" rel="noopener">ソース →</a>
+  <span class="grow"></span>
+  <button id="btn-lang" class="small" title="Language">EN</button>
+</header>
+<main>
+  <aside>
+    <section class="step" id="s-form">
+      <h2><span class="num">1</span><span data-t="s1">様式のPDF</span></h2>
+      <div id="form-info" class="note" data-t="s1note">申請書・届出書のPDFを右に放り込むか、タップして選びます。</div>
+      <div class="row"><button id="btn-open" class="small" data-t="open">ファイルを選ぶ</button><button id="btn-sample" class="small" data-t="sample">見本（国税庁の開業届）で試す</button></div>
+    </section>
+    <section class="step" id="s-profile">
+      <h2><span class="num">2</span><span data-t="s2">あなたの情報</span></h2>
+      <div id="profile"></div>
+      <div class="row"><button id="btn-addkey" class="small" data-t="addkey">項目を足す</button><button id="btn-export" class="small" data-t="export">JSONで書き出す</button><button id="btn-import" class="small" data-t="import">読み込む</button></div>
+      <label class="note" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="persist" type="checkbox"><span data-t="persist">この端末に保存する（localStorage）</span></label>
+      <p class="note" data-t="s2note">保存しなければ、タブを閉じると消えます。値はこのブラウザから出ません。</p>
+    </section>
+    <section class="step" id="s-map">
+      <h2><span class="num">3</span><span data-t="s3">欄の判定</span></h2>
+      <div id="map-info" class="note" data-t="s3note">様式を読み込むと、欄の近くの文字を集めます。Jev に送るのはその断片と項目名だけです。</div>
+      <div class="row"><button id="btn-ocr" class="small" hidden data-t="ocr">文字を読み取る（約10MB）</button><button id="btn-jev" class="primary" disabled data-t="jev">送る内容を確認して判定</button></div>
+      <div id="map-stats" class="note"></div>
+    </section>
+    <section class="step" id="s-save">
+      <h2><span class="num">4</span><span data-t="s4">記入して保存</span></h2>
+      <div class="row"><button id="btn-fill" class="primary" disabled data-t="fill">記入したPDFを保存</button></div>
+      <p class="note" data-t="s4note">入力欄のある様式は欄に書いて確定（平坦化）します。線だけの様式は枠の中に文字を置きます。</p>
+    </section>
+    <p class="note" data-t="privacy">送信の経路: このブラウザ → ilove-ai.net の中継 → Vercel AI Gateway → TypeSafe（Jev）。Gateway はこのモデルを「保持なし・学習不使用」と宣言しています。中継はログに本文を残しません。</p>
+  </aside>
+  <div class="stage">
+    <div id="drop" class="drop">
+      <h3 data-t="drop1">ここに様式のPDFをドロップ</h3>
+      <p data-t="drop2">または タップして選ぶ</p>
+      <p data-t="drop3">値はアップロードしません。欄のラベルだけを判定に送ります</p>
+    </div>
+    <div id="view" hidden>
+      <div class="pagebar"><button id="prev" class="small">←</button><span id="pageno">1 / 1</span><button id="next" class="small">→</button><span id="kind" class="pill"></span><span id="fields-count"></span></div>
+      <div class="pagewrap" id="pagewrap"><canvas id="cv"></canvas><div class="overlay" id="ov"></div><div id="pick"></div></div>
+      <div class="legend"><span><i class="lg"></i><span data-t="lg">自動で入れた（確率 0.8 以上）</span></span><span><i class="ly"></i><span data-t="ly">入れたが確認して（0.5〜0.8）</span></span><span><i class="ln"></i><span data-t="ln">空欄・タップして選ぶ</span></span></div>
+    </div>
+  </div>
+</main>
+<footer><span data-t="foot">できないこと: スキャンの傾き補正・手書き様式・XFA・縦書きの記入。判定は確率であり、記入内容の確認はあなたが行います。</span> · <a href="/pdf" data-t="sib">姉妹ツール: ジェネリックPDF</a></footer>
+
+<dialog id="dlg-send"><div class="body">
+  <h3 data-t="dlgTitle">これを送ります</h3>
+  <p class="note" data-t="dlgNote">欄ごとの「近くの文字」と、あなたの情報の「項目名」だけです。値は含まれません。</p>
+  <div style="max-height:46vh;overflow:auto"><table><thead><tr><th data-t="thField">欄</th><th data-t="thFrag">近くの文字（断片）</th></tr></thead><tbody id="send-rows"></tbody></table></div>
+  <p class="note"><span data-t="dlgKeys">項目名:</span> <span id="send-keys" class="mono"></span></p>
+  <div class="actions"><button id="send-cancel" data-t="cancel">やめる</button><button id="send-go" class="primary" data-t="send">送って判定する</button></div>
+</div></dialog>
+
+<div id="status" role="status"></div>
+<input id="file-pdf" class="sr" type="file" accept="application/pdf,.pdf">
+<input id="file-json" class="sr" type="file" accept="application/json,.json">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+if (!window.PDFLib || !window.fontkit) { const st = document.getElementById("status"); st.textContent = "部品（pdf-lib / fontkit）を読み込めませんでした。ネットワークを確認して再読み込みしてください。"; st.classList.add("show"); throw new Error("libraries not loaded"); }
+const { PDFDocument } = PDFLib;
+
+const VERSION = "0.1.1";
+const HOST = "https://ilove-ai.net";
+const FONT_PATH = "/pdf/fonts/NotoSansJP-Regular.subset.otf";
+const FONT_URLS = location.protocol === "file:" ? [HOST + FONT_PATH] : [FONT_PATH, HOST + FONT_PATH];
+const FONT_FULL_URL = "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/SubsetOTF/JP/NotoSansJP-Regular.otf";
+const QPDF_BASE = "https://cdn.jsdelivr.net/npm/@jspawn/qpdf-wasm@0.0.2/";
+const TESS_JS = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
+const TESS_WORKER = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js";
+const TESS_CORE = "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0";
+const TESS_LANG = "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main";
+const MAP_ENDPOINT = location.protocol === "file:" ? HOST + "/api/fill/map" : "/api/fill/map";
+const SAMPLE_URL = "/fill/samples/kaigyo-r06.pdf";
+const T_HIGH = 0.8, T_MID = 0.5;
+const GENERIC_NAME = /^(テキスト|text|textfield|check ?box|チェック|radio|field|fill|untitled)\s*[-_ ]?\d*$/i;
+
+/* ───────── 文言（ja / en）───────── */
+const I18N = {
+  s1: ["様式のPDF", "The form (PDF)"], s1note: ["申請書・届出書のPDFを右に放り込むか、タップして選びます。", "Drop an application form PDF on the right, or tap to choose."],
+  open: ["ファイルを選ぶ", "Choose file"], sample: ["見本（国税庁の開業届）で試す", "Try the sample (NTA business-start form)"],
+  s2: ["あなたの情報", "Your details"], addkey: ["項目を足す", "Add item"], export: ["JSONで書き出す", "Export JSON"], import: ["読み込む", "Import"],
+  persist: ["この端末に保存する（localStorage）", "Keep on this device (localStorage)"], s2note: ["保存しなければ、タブを閉じると消えます。値はこのブラウザから出ません。", "Unless kept, it is gone when the tab closes. Values never leave this browser."],
+  s3: ["欄の判定", "Match fields"], s3note: ["様式を読み込むと、欄の近くの文字を集めます。Jev に送るのはその断片と項目名だけです。", "After loading, text near each field is collected. Only those fragments and your item names go to Jev."],
+  ocr: ["文字を読み取る（約10MB）", "Read text from image (~10 MB)"], jev: ["送る内容を確認して判定", "Review what is sent, then match"],
+  s4: ["記入して保存", "Fill and save"], fill: ["記入したPDFを保存", "Save filled PDF"], s4note: ["入力欄のある様式は欄に書いて確定（平坦化）します。線だけの様式は枠の中に文字を置きます。", "Forms with fields are filled and flattened. Line-only forms get text placed inside the boxes."],
+  privacy: ["送信の経路: このブラウザ → ilove-ai.net の中継 → Vercel AI Gateway → TypeSafe（Jev）。Gateway はこのモデルを「保持なし・学習不使用」と宣言しています。中継はログに本文を残しません。", "Path: this browser → ilove-ai.net relay → Vercel AI Gateway → TypeSafe (Jev). The gateway declares zero retention and no training for this model. The relay keeps no request bodies in logs."],
+  drop1: ["ここに様式のPDFをドロップ", "Drop the form PDF here"], drop2: ["または タップして選ぶ", "or tap to choose"], drop3: ["値はアップロードしません。欄のラベルだけを判定に送ります", "Your values are never uploaded. Only field labels go out for matching."],
+  lg: ["自動で入れた（確率 0.8 以上）", "Filled (probability ≥ 0.8)"], ly: ["入れたが確認して（0.5〜0.8）", "Filled, please check (0.5–0.8)"], ln: ["空欄・タップして選ぶ", "Blank, tap to pick"],
+  foot: ["できないこと: スキャンの傾き補正・手書き様式・XFA・縦書きの記入。判定は確率であり、記入内容の確認はあなたが行います。", "Not supported: skew correction, handwritten forms, XFA, vertical writing into fields. Matching is probabilistic; you verify the result."],
+  sib: ["姉妹ツール: ジェネリックPDF", "Sibling tool: generic-pdf"],
+  dlgTitle: ["これを送ります", "This is what will be sent"], dlgNote: ["欄ごとの「近くの文字」と、あなたの情報の「項目名」だけです。値は含まれません。", "Only the text near each field and the names of your items. No values."],
+  thField: ["欄", "Field"], thFrag: ["近くの文字（断片）", "Nearby text (fragments)"], dlgKeys: ["項目名:", "Item names:"], cancel: ["やめる", "Cancel"], send: ["送って判定する", "Send and match"],
+  loading: ["読み込んでいます…", "Loading…"], decrypting: ["保護を外しています…", "Removing protection…"], analyzing: ["欄を調べています…", "Analyzing fields…"],
+  noFields: ["この様式には入力欄も枠も見つかりませんでした。", "No fields or boxes were found in this form."],
+  kindA: ["文字あり・枠だけ", "text layer, boxes only"], kindB: ["文字あり・入力欄あり", "text layer + fields"], kindC: ["画像・入力欄あり", "image + fields"], kindImg: ["画像のみ", "image only"],
+  needOcr: ["この様式は画像なので、欄のラベルを読むには文字の読み取り部品（約10MB）が要ります。", "This form is an image. Reading its labels needs the OCR component (~10 MB)."],
+  ocrLoading: ["読み取り部品を読み込んでいます…", "Loading OCR…"], ocrRun: ["文字を読み取っています… {p}%", "Reading text… {p}%"], ocrDone: ["{n} 個の欄に近くの文字が付きました", "{n} fields got nearby text"],
+  presetHit: ["この様式のプリセットがあります。判定なしで埋められます。", "A preset exists for this form. It fills without any matching call."],
+  jevBusy: ["Jev で判定しています…", "Matching with Jev…"], jevDone: ["判定: 自動 {g}・確認 {y}・空欄 {n}", "Matched: {g} filled, {y} to check, {n} blank"],
+  jevOff: ["判定は今は使えません（{r}）。欄をタップして手で選べます。", "Matching is unavailable now ({r}). Tap fields to pick by hand."],
+  fields: ["{n} 個の欄", "{n} fields"], pickNone: ["空欄のまま", "Leave blank"], pickTitle: ["この欄は…", "This field is…"],
+  building: ["PDFを作っています…", "Building PDF…"], saved: ["保存しました（{n} 欄）", "Saved ({n} fields)"], nothing: ["入れる値がありません。項目に値を入れてください。", "Nothing to fill. Enter values in your details."],
+  askPassword: ["「{name}」を開くパスワード", "Password to open \"{name}\""], wrongPassword: ["パスワードが違います", "Wrong password"],
+  loadFail: ["読み込めませんでした: {err}", "Could not load: {err}"], keyLabel: ["項目名", "Item"], del: ["削除", "Remove"], value: ["値", "Value"],
+  remembered: ["前回の対応を復元しました（{n} 欄）", "Restored previous mapping ({n} fields)"],
+};
+// [キー, 画面の名前(ja), 画面の名前(en), Jev に渡す説明(ja)]。説明には様式でよく使われる別名を添える。
+// 実測（開業届の OCR 断片 10 欄・本番の中継経由）: 名前だけだと一致 7/10 だが「納税地」を税務署名と 0.89 で取り違えて緑になる。
+// 別名つきだと一致 6/10・確信して間違える欄 0（取り違えは 0.56 の黄色に落ちる）。守るべきは後者なので別名を採る
+const DEFAULT_KEYS = [["name", "氏名", "Full name", "氏名（名前・申請者氏名）"], ["kana", "フリガナ", "Name (kana)", "フリガナ（氏名のカナ）"], ["birth", "生年月日", "Date of birth", "生年月日"], ["zip", "郵便番号", "Postal code", "郵便番号（〒）"], ["address", "住所", "Address", "住所（納税地・住所地・所在地）"], ["tel", "電話番号", "Phone", "電話番号（TEL）"], ["email", "メール", "Email", "メールアドレス"], ["shop", "屋号", "Trade name", "屋号（商号・店名）"], ["shopkana", "屋号フリガナ", "Trade name (kana)", "屋号のフリガナ"], ["job", "職業", "Occupation", "職業（業種）"], ["start", "開業日", "Start date", "開業日（事業開始日）"], ["taxoffice", "税務署名", "Tax office", "税務署名（提出先の税務署）"], ["today", "提出日", "Submission date", "提出日（届出日・申請日）"], ["mynumber", "個人番号", "My Number", "個人番号（マイナンバー）"], ["summary", "事業の概要", "Business summary", "事業の概要（事業内容）"]];
+
+let lang = (() => { try { const v = localStorage.getItem("gf-lang"); if (v === "ja" || v === "en") return v; } catch (_) {} return (navigator.languages || [navigator.language || "ja"]).some((l) => /^ja/i.test(l)) ? "ja" : "en"; })();
+const t = (k, vars = {}) => (I18N[k] ? I18N[k][lang === "ja" ? 0 : 1] : k).replace(/\{(\w+)\}/g, (_, v) => (v in vars ? vars[v] : `{${v}}`));
+function applyLang() { document.documentElement.lang = lang; document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); }); $("#btn-lang").textContent = lang === "ja" ? "EN" : "日本語"; renderProfile(); }
+const $ = (s) => document.querySelector(s);
+let statusTimer = null;
+function status(msg, ms = 2500) { const el = $("#status"); clearTimeout(statusTimer); if (!msg) { el.classList.remove("show"); return; } el.textContent = msg; el.classList.add("show"); if (ms > 0) statusTimer = setTimeout(() => el.classList.remove("show"), ms); }
+
+/* ───────── 状態 ───────── */
+const state = {
+  name: "", bytes: null, hash: "", fp: "", pdf: null, pages: [], kind: "", cur: 0, scale: 1,
+  fields: [], // {id, page, type:"text"|"check", name, rect:{x,y,w,h} PDF座標(y上向き), multiline, fragments:[], key:null, p:0, src:"" }
+  profile: [], // {key, label, value}
+  fontBytes: null, fontFull: null, fk: null, ocr: { loaded: false, lines: {} }, preset: null, jevDisabled: "",
+};
+
+/* ───────── プロフィール ───────── */
+function loadProfile() {
+  let saved = null; try { saved = JSON.parse(localStorage.getItem("gf-profile") || "null"); } catch (_) {}
+  if (saved && Array.isArray(saved.items)) { state.profile = saved.items; $("#persist").checked = true; }
+  else state.profile = DEFAULT_KEYS.map(([key, ja, en, desc]) => ({ key, label: lang === "ja" ? ja : en, labelEn: en, labelJa: ja, desc, value: "" }));
+}
+function persistProfile() { try { if ($("#persist").checked) localStorage.setItem("gf-profile", JSON.stringify({ items: state.profile })); else localStorage.removeItem("gf-profile"); } catch (_) {} }
+function renderProfile() {
+  const box = $("#profile"); box.innerHTML = "";
+  for (const item of state.profile) {
+    const row = document.createElement("div"); row.className = "kv";
+    const lab = document.createElement("input"); lab.type = "text"; lab.value = item.label; lab.title = t("keyLabel"); lab.style.fontSize = "12px";
+    lab.addEventListener("input", () => { item.label = lab.value; persistProfile(); });
+    const val = document.createElement("input"); val.type = "text"; val.value = item.value; val.placeholder = t("value"); val.autocomplete = "off";
+    val.addEventListener("input", () => { item.value = val.value; persistProfile(); refreshOverlay(); $("#btn-fill").disabled = !state.fields.length; });
+    const del = document.createElement("button"); del.textContent = "×"; del.title = t("del"); del.addEventListener("click", () => { state.profile = state.profile.filter((x) => x !== item); persistProfile(); renderProfile(); });
+    row.append(lab, val, del); box.appendChild(row);
+  }
+}
+$("#btn-addkey").addEventListener("click", () => { state.profile.push({ key: "k" + Date.now().toString(36), label: "", value: "" }); renderProfile(); persistProfile(); });
+$("#persist").addEventListener("change", persistProfile);
+$("#btn-export").addEventListener("click", () => { const blob = new Blob([JSON.stringify({ items: state.profile }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "profile.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); });
+$("#btn-import").addEventListener("click", () => $("#file-json").click());
+$("#file-json").addEventListener("change", async (e) => { const f = e.target.files[0]; if (!f) return; try { const j = JSON.parse(await f.text()); if (Array.isArray(j.items)) { state.profile = j.items.map((x) => ({ key: String(x.key || "k" + Math.random().toString(36).slice(2)), label: String(x.label || ""), value: String(x.value || "") })); renderProfile(); persistProfile(); } } catch (err) { status(t("loadFail", { err: err.message })); } e.target.value = ""; });
+
+/* ───────── 読み込み ───────── */
+$("#drop").addEventListener("click", () => $("#file-pdf").click());
+$("#btn-open").addEventListener("click", () => $("#file-pdf").click());
+$("#file-pdf").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) openFile(f); e.target.value = ""; });
+["dragenter", "dragover"].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); $("#drop").classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); $("#drop").classList.remove("over"); }));
+document.addEventListener("drop", (e) => { const f = [...(e.dataTransfer?.files || [])].find((x) => /\.pdf$/i.test(x.name) || x.type === "application/pdf"); if (f) openFile(f); });
+$("#btn-sample").addEventListener("click", async () => { try { status(t("loading"), 0); const r = await fetch(SAMPLE_URL); if (!r.ok) throw new Error(`sample ${r.status}`); openFile(new File([await r.arrayBuffer()], "kaigyo-r06.pdf", { type: "application/pdf" })); } catch (e) { status(t("loadFail", { err: e.message })); } });
+
+function hasEncrypt(u8) { const pat = [0x2f, 0x45, 0x6e, 0x63, 0x72, 0x79, 0x70, 0x74]; outer: for (let i = 0, n = u8.length - pat.length; i <= n; i++) { if (u8[i] !== 0x2f) continue; for (let j = 1; j < pat.length; j++) if (u8[i + j] !== pat[j]) continue outer; return true; } return false; }
+async function askPassword(bytes, name) { let pw = ""; for (;;) { try { const d = await pdfjsLib.getDocument({ data: bytes.slice(0), password: pw, isEvalSupported: false }).promise; d.destroy(); return pw; } catch (e) { if (!e || e.name !== "PasswordException") throw e; if (pw) status(t("wrongPassword")); const v = prompt(t("askPassword", { name })); if (v === null || v === "") return null; pw = v; } } }
+let qpdfMod = null, qpdfErr = "";
+async function loadQpdf() { if (qpdfMod) return qpdfMod; if (!window.Module) await new Promise((res, rej) => { const s = document.createElement("script"); s.src = QPDF_BASE + "qpdf.js"; s.onload = res; s.onerror = () => rej(new Error("qpdf.js")); document.head.appendChild(s); }); qpdfMod = await window.Module({ locateFile: (f) => QPDF_BASE + f, print: () => {}, printErr: (m) => { qpdfErr += m + "\n"; } }); return qpdfMod; }
+async function runQpdf(input, args) { const q = await loadQpdf(); qpdfErr = ""; q.FS.writeFile("in.pdf", new Uint8Array(input)); let code = 0; try { code = q.callMain([...args, "in.pdf", "out.pdf"]); } catch (e) { code = e && e.status !== undefined ? e.status : 1; } let out = null; try { out = q.FS.readFile("out.pdf"); } catch (_) {} try { q.FS.unlink("in.pdf"); } catch (_) {} try { q.FS.unlink("out.pdf"); } catch (_) {} if ((code !== 0 && code !== 3) || !out) throw new Error(qpdfErr.trim().split("\n")[0] || `qpdf exit ${code}`); return out; }
+/* 様式の指紋: 欄の名前・種類・位置（1pt 単位に丸め）とページ数から。保護を外した後のバイト列は qpdf の出力が毎回変わるので鍵にできない（実測） */
+async function fingerprint() {
+  const parts = state.fields.map((f) => [f.page, f.type, f.name, Math.round(f.rect.x), Math.round(f.rect.y), Math.round(f.rect.w), Math.round(f.rect.h)].join(":")).sort();
+  const txt = state.pdf.numPages + "|" + parts.join("|");
+  return sha256hex(new TextEncoder().encode(txt));
+}
+async function sha256hex(buf) { const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+
+async function openFile(file) {
+  try {
+    status(t("loading"), 0);
+    let bytes = await file.arrayBuffer();
+    if (hasEncrypt(new Uint8Array(bytes))) { const pw = await askPassword(bytes, file.name); if (pw === null) { status(""); return; } status(t("decrypting"), 0); bytes = (await runQpdf(bytes, ["--decrypt", `--password=${pw}`])).buffer; }
+    state.name = file.name; state.bytes = bytes; state.hash = await sha256hex(bytes.slice(0));
+    state.pdf = await pdfjsLib.getDocument({ data: bytes.slice(0), isEvalSupported: false }).promise;
+    state.fields = []; state.pages = []; state.cur = 0; state.ocr = { loaded: state.ocr.loaded, lines: {} }; state.preset = null;
+    status(t("analyzing"), 0);
+    for (let n = 1; n <= state.pdf.numPages; n++) state.pages.push(await analyzePage(n));
+    state.fp = await fingerprint();
+    classify();
+    collectTextFragments();
+    await tryPreset();
+    restoreMapping();
+    $("#drop").hidden = true; $("#view").hidden = false;
+    $("#form-info").textContent = `${file.name} · ${state.pdf.numPages}p`;
+    $("#kind").textContent = t({ A: "kindA", B: "kindB", C: "kindC", I: "kindImg" }[state.kind]);
+    $("#fields-count").textContent = t("fields", { n: state.fields.length });
+    $("#btn-ocr").hidden = !(state.kind === "C" || state.kind === "I");
+    $("#btn-jev").disabled = !state.fields.some((f) => f.type === "text" && f.fragments.length) || !!state.preset;
+    $("#btn-fill").disabled = !state.fields.length;
+    $("#map-info").textContent = state.kind === "C" || state.kind === "I" ? t("needOcr") : t("s3note");
+    if (state.preset) $("#map-info").textContent = t("presetHit");
+    if (!state.fields.length) status(t("noFields"), 5000); else status("");
+    await renderPage();
+  } catch (e) { status(t("loadFail", { err: e && e.message ? e.message : e }), 6000); }
+}
+
+/* ───────── 解析 ───────── */
+const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+const ap = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+async function vectorBoxes(page) {
+  const O = pdfjsLib.OPS; const ops = await page.getOperatorList();
+  const ARGC = { [O.moveTo]: 2, [O.lineTo]: 2, [O.curveTo]: 6, [O.curveTo2]: 4, [O.curveTo3]: 4, [O.closePath]: 0, [O.rectangle]: 4 };
+  let ctm = [1, 0, 0, 1, 0, 0]; const st = []; const out = [];
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i], a = ops.argsArray[i];
+    if (fn === O.save) st.push(ctm); else if (fn === O.restore) ctm = st.pop() || [1, 0, 0, 1, 0, 0]; else if (fn === O.transform) ctm = mul(ctm, a);
+    else if (fn === O.constructPath) { const [codes, co] = a; let k = 0; const pts = []; for (const c of codes) { const n = ARGC[c] ?? 0; if (c === O.rectangle) { const [x, y, w, h] = co.slice(k, k + 4); pts.push(ap(ctm, x, y), ap(ctm, x + w, y + h)); } else if (n >= 2) { const [x, y] = co.slice(k + n - 2, k + n); pts.push(ap(ctm, x, y)); } k += n; }
+      if (pts.length >= 2 && (codes.includes(O.closePath) || codes.includes(O.rectangle))) { const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const b = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; if (b.w > 30 && b.h > 9 && b.h < 120 && b.w < page.view[2] * 0.95) out.push(b); } }
+  }
+  // 同じ枠が二重に描かれることがあるので、ほぼ同じ矩形はまとめる
+  const uniq = []; for (const b of out) if (!uniq.some((u) => Math.abs(u.x - b.x) < 2 && Math.abs(u.y - b.y) < 2 && Math.abs(u.w - b.w) < 2 && Math.abs(u.h - b.h) < 2)) uniq.push(b);
+  return uniq;
+}
+async function analyzePage(n) {
+  const page = await state.pdf.getPage(n); const vp = page.getViewport({ scale: 1 });
+  const ann = (await page.getAnnotations()).filter((a) => a.subtype === "Widget");
+  const tc = await page.getTextContent();
+  const texts = tc.items.filter((i) => i.str && i.str.trim()).map((i) => ({ text: i.str.trim(), x: i.transform[4], y: i.transform[5], w: i.width || 0, h: i.height || Math.abs(i.transform[3]) || 10 }));
+  const ops = await page.getOperatorList();
+  const images = ops.fnArray.filter((f) => f === pdfjsLib.OPS.paintImageXObject || f === pdfjsLib.OPS.paintJpegXObject).length;
+  const boxes = ann.length ? [] : await vectorBoxes(page);
+  let idx = state.fields.length;
+  for (const a of ann) {
+    const kind = a.fieldType === "Btn" ? (a.checkBox === false && a.radioButton ? "check" : "check") : a.fieldType === "Tx" ? "text" : null;
+    if (!kind) continue;
+    state.fields.push({ id: "f" + idx++, page: n, type: kind, name: a.fieldName || "", tu: a.alternativeText || "", rect: { x: a.rect[0], y: a.rect[1], w: a.rect[2] - a.rect[0], h: a.rect[3] - a.rect[1] }, multiline: !!a.multiLine, fragments: [], key: null, p: 0, src: "" });
+  }
+  for (const b of boxes) state.fields.push({ id: "f" + idx++, page: n, type: "text", name: "", tu: "", rect: b, multiline: b.h > 40, fragments: [], key: null, p: 0, src: "", virtual: true });
+  return { n, page, vp, texts, images, hasWidgets: ann.length > 0 };
+}
+function classify() {
+  const texts = state.pages.reduce((s, p) => s + p.texts.length, 0), widgets = state.pages.some((p) => p.hasWidgets), images = state.pages.reduce((s, p) => s + p.images, 0);
+  state.kind = widgets ? (texts > 0 ? "B" : "C") : texts > 0 ? "A" : "I";
+  if (state.kind === "I" && images === 0) state.kind = "A";
+}
+// 文字層から、各欄の近くの短い文字列を拾う（左・上）。OCR の結果も同じ形で足す
+function nearby(f, items, yUp) {
+  const r = f.rect; const out = [];
+  for (const it of items) {
+    if (it.text.length > 40) continue;
+    const ix0 = it.x, ix1 = it.x + it.w, iy0 = yUp ? it.y : it.y - it.h, iy1 = yUp ? it.y + it.h : it.y;
+    const ry0 = r.y, ry1 = r.y + r.h;
+    const oy = Math.min(iy1, ry1) - Math.max(iy0, ry0), ox = Math.min(ix1, r.x + r.w) - Math.max(ix0, r.x);
+    if (ix1 <= r.x + 3 && oy > Math.min(r.h, iy1 - iy0) * 0.35 && r.x - ix1 < 420) out.push({ t: it.text, d: r.x - ix1, rel: "left" });
+    else if (iy0 >= ry1 - 3 && ox > 0 && iy0 - ry1 < 60) out.push({ t: it.text, d: iy0 - ry1 + 50, rel: "above" });
+  }
+  out.sort((a, b) => a.d - b.d);
+  const seen = new Set(); const res = [];
+  for (const o of out) { if (seen.has(o.t)) continue; seen.add(o.t); res.push(o.t); if (res.length >= 4) break; }
+  return res;
+}
+function collectTextFragments() {
+  for (const f of state.fields) {
+    const pg = state.pages[f.page - 1]; const frags = [];
+    if (f.name && !GENERIC_NAME.test(f.name.trim())) frags.push(f.name.trim());
+    if (f.tu) frags.push(f.tu.trim());
+    frags.push(...nearby(f, pg.texts, true));
+    f.fragments = [...new Set(frags)].slice(0, 6);
+  }
+}
+
+/* ───────── プリセットと記憶 ───────── */
+async function tryPreset() { try { const r = await fetch(`/fill/presets/${state.fp}.json`, { cache: "force-cache" }); if (!r.ok) return; const p = await r.json(); if (!p || !p.map) return; state.preset = p; for (const f of state.fields) { const k = p.map[f.name] ?? p.map[f.id]; const baseKey = typeof k === "string" ? k.split(".")[0] : ""; if (k && state.profile.some((x) => x.key === baseKey)) { f.key = k; f.p = 1; f.src = "preset"; } } } catch (_) {} }
+function mapKey() { return "gf-map:" + state.fp; }
+function restoreMapping() { try { const m = JSON.parse(localStorage.getItem(mapKey()) || "null"); if (!m) return; let n = 0; for (const f of state.fields) { const k = m[f.name || f.id]; if (k !== undefined && f.src !== "preset") { f.key = k; f.p = 1; f.src = "manual"; n++; } } if (n) status(t("remembered", { n })); } catch (_) {} }
+function rememberMapping() { try { const m = {}; for (const f of state.fields) if (f.src === "manual") m[f.name || f.id] = f.key; localStorage.setItem(mapKey(), JSON.stringify(m)); } catch (_) {} }
+
+/* ───────── 表示 ───────── */
+let renderTask = null;
+async function renderPage() {
+  const pg = state.pages[state.cur]; const cv = $("#cv");
+  // 幅に合わせるが、スマホで巨大な様式（2481pt 幅の国税庁様式など）が読めなくならないよう縮尺は 0.5 を下限にし、はみ出す分は横にパンする
+  const maxW = Math.max(320, $(".stage").clientWidth - 32); state.scale = Math.max(0.5, Math.min(1.4, maxW / pg.vp.width));
+  const vp = pg.page.getViewport({ scale: state.scale }); const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.floor(vp.width * dpr); cv.height = Math.floor(vp.height * dpr); cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
+  $("#pagewrap").style.width = vp.width + "px"; $("#pagewrap").style.height = vp.height + "px";
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (renderTask) { try { renderTask.cancel(); } catch (_) {} }
+  renderTask = pg.page.render({ canvasContext: ctx, viewport: vp });
+  try { await renderTask.promise; } catch (e) { if (!e || e.name !== "RenderingCancelledException") throw e; return; }
+  $("#pageno").textContent = `${state.cur + 1} / ${state.pages.length}`;
+  refreshOverlay();
+}
+function tierOf(f) { if (!f.key) return "n"; if (f.src === "manual" || f.src === "preset") return "g"; return f.p >= T_HIGH ? "g" : f.p >= T_MID ? "y" : "n"; }
+/* 派生キー: 「birth.y」「birth.m」「birth.d」（年月日の分割）「birth.era」「birth.ey」（元号・元号年）「tel.1」「tel.2」「tel.3」（ハイフン区切りの分割）。
+   値の計算はこのブラウザの中だけ。プリセットが欄ごとに使う */
+const ERAS = [["令和", 2019, 5, 1], ["平成", 1989, 1, 8], ["昭和", 1926, 12, 25], ["大正", 1912, 7, 30]];
+function parseDate(v) {
+  const s = String(v || "").trim(); let m;
+  if ((m = s.match(/^(\d{4})[\/\-.年]\s*(\d{1,2})[\/\-.月]\s*(\d{1,2})日?$/))) return { y: +m[1], mo: +m[2], d: +m[3] };
+  if ((m = s.match(/^(令和|平成|昭和|大正)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日?$/))) { const era = ERAS.find((e) => e[0] === m[1]); const ey = m[2] === "元" ? 1 : +m[2]; return { y: era[1] + ey - 1, mo: +m[3], d: +m[4] }; }
+  if ((m = s.match(/^([RHST])(\d{1,2})[\.\/](\d{1,2})[\.\/](\d{1,2})$/i))) { const era = { R: "令和", H: "平成", S: "昭和", T: "大正" }[m[1].toUpperCase()]; const e = ERAS.find((x) => x[0] === era); return { y: e[1] + +m[2] - 1, mo: +m[3], d: +m[4] }; }
+  return null;
+}
+function eraOf(dt) { for (const [name, y, mo, d] of ERAS) { if (dt.y > y || (dt.y === y && (dt.mo > mo || (dt.mo === mo && dt.d >= d)))) return { era: name, ey: dt.y - y + 1 }; } return null; }
+function derive(base, part) {
+  if (/^[123]$/.test(part)) { const parts = String(base || "").split(/[-‐－ー–—ｰ\s]+/).filter(Boolean); return parts[+part - 1] || ""; }
+  const dt = parseDate(base); if (!dt) return "";
+  if (part === "y") return String(dt.y); if (part === "m") return String(dt.mo); if (part === "d") return String(dt.d);
+  const er = eraOf(dt); if (!er) return ""; if (part === "era") return er.era; if (part === "ey") return String(er.ey); return "";
+}
+function valueOf(f) {
+  if (!f.key) return "";
+  const dot = f.key.indexOf("."); const baseKey = dot > 0 ? f.key.slice(0, dot) : f.key; const part = dot > 0 ? f.key.slice(dot + 1) : "";
+  const it = state.profile.find((x) => x.key === baseKey); if (!it) return "";
+  return part ? derive(it.value, part) : it.value;
+}
+function labelOf(key) { const dot = key.indexOf("."); const baseKey = dot > 0 ? key.slice(0, dot) : key; const it = state.profile.find((x) => x.key === baseKey); const base = it ? it.label || it.key : baseKey; return dot > 0 ? `${base}(${key.slice(dot + 1)})` : base; }
+function refreshOverlay() {
+  const ov = $("#ov"); ov.innerHTML = ""; const pg = state.pages[state.cur]; if (!pg) return; const s = state.scale, H = pg.vp.height;
+  for (const f of state.fields) {
+    if (f.page !== state.cur + 1) continue;
+    const el = document.createElement("div"); el.className = "fld " + tierOf(f) + (f.type === "check" ? " check" : ""); el.dataset.id = f.id;
+    el.style.left = f.rect.x * s + "px"; el.style.top = (H - f.rect.y - f.rect.h) * s + "px"; el.style.width = f.rect.w * s + "px"; el.style.height = f.rect.h * s + "px";
+    const tag = document.createElement("span"); tag.className = "tag";
+    if (f.type === "check") tag.textContent = f.checked ? "✓" : ""; else tag.textContent = f.key ? `${labelOf(f.key)}${f.src === "jev" ? " " + Math.round(f.p * 100) + "%" : ""}${valueOf(f) ? " · " + valueOf(f) : ""}` : (f.fragments[0] || "");
+    el.appendChild(tag); el.addEventListener("click", (e) => { e.stopPropagation(); openPick(f, el); }); ov.appendChild(el);
+  }
+  $("#map-stats").textContent = statsText();
+}
+function statsText() { const tx = state.fields.filter((f) => f.type === "text"); const g = tx.filter((f) => tierOf(f) === "g").length, y = tx.filter((f) => tierOf(f) === "y").length; return tx.length ? t("jevDone", { g, y, n: tx.length - g - y }) : ""; }
+$("#prev").addEventListener("click", () => { if (state.cur > 0) { state.cur--; renderPage(); } });
+$("#next").addEventListener("click", () => { if (state.cur < state.pages.length - 1) { state.cur++; renderPage(); } });
+window.addEventListener("resize", () => { if (state.pdf) renderPage(); });
+
+/* 欄をタップ → 項目を選ぶ */
+function openPick(f, el) {
+  const pick = $("#pick"); pick.innerHTML = ""; document.querySelectorAll(".fld.sel").forEach((x) => x.classList.remove("sel")); el.classList.add("sel");
+  const h = document.createElement("div"); h.style.fontWeight = "600"; h.style.marginBottom = "4px"; h.textContent = t("pickTitle"); pick.appendChild(h);
+  const fr = document.createElement("p"); fr.className = "frag"; fr.textContent = (f.fragments.length ? f.fragments.join(" / ") : f.name || "") + (f.src === "jev" ? ` (${Math.round(f.p * 100)}%)` : ""); pick.appendChild(fr);
+  if (f.type === "check") { const b = document.createElement("button"); b.className = "primary"; b.textContent = f.checked ? "✓ → □" : "□ → ✓"; b.addEventListener("click", () => { f.checked = !f.checked; f.src = "manual"; closePick(); refreshOverlay(); }); pick.appendChild(b); }
+  else {
+    const sel = document.createElement("select"); const none = document.createElement("option"); none.value = ""; none.textContent = t("pickNone"); sel.appendChild(none);
+    for (const it of state.profile) { const o = document.createElement("option"); o.value = it.key; o.textContent = (it.label || it.key) + (it.value ? " · " + it.value : ""); if (f.key === it.key) o.selected = true; sel.appendChild(o); }
+    sel.addEventListener("change", () => { f.key = sel.value || null; f.p = f.key ? 1 : 0; f.src = f.key ? "manual" : ""; rememberMapping(); closePick(); refreshOverlay(); $("#btn-fill").disabled = !state.fields.length; });
+    pick.appendChild(sel);
+  }
+  const wrap = $("#pagewrap"); const left = Math.min(parseFloat(el.style.left), wrap.clientWidth - 270); const top = parseFloat(el.style.top) + parseFloat(el.style.height) + 4;
+  pick.style.left = Math.max(0, left) + "px"; pick.style.top = Math.min(top, wrap.clientHeight - 140) + "px"; pick.style.display = "block";
+  if (f.type !== "check") pick.querySelector("select").focus();
+}
+function closePick() { $("#pick").style.display = "none"; document.querySelectorAll(".fld.sel").forEach((x) => x.classList.remove("sel")); }
+document.addEventListener("click", (e) => { if (!$("#pick").contains(e.target)) closePick(); });
+
+/* ───────── OCR（画像の様式だけ・押したときだけ読み込む） ───────── */
+async function loadTesseract() { if (window.Tesseract) return window.Tesseract; await new Promise((res, rej) => { const s = document.createElement("script"); s.src = TESS_JS; s.onload = res; s.onerror = () => rej(new Error("tesseract.js")); document.head.appendChild(s); }); return window.Tesseract; }
+async function renderPageImage(pg) { const vp = pg.page.getViewport({ scale: 1 }); const c = document.createElement("canvas"); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height); await pg.page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise; return c; }
+$("#btn-ocr").addEventListener("click", runOcr);
+async function runOcr() {
+  try {
+    $("#btn-ocr").disabled = true; status(t("ocrLoading"), 0);
+    const T = await loadTesseract();
+    const opts = { workerPath: TESS_WORKER, corePath: TESS_CORE, langPath: TESS_LANG, gzip: false, logger: (m) => { if (m.status === "recognizing text") status(t("ocrRun", { p: Math.round((m.progress || 0) * 100) }), 0); } };
+    const wH = await T.createWorker("jpn", 1, opts); await wH.setParameters({ preserve_interword_spaces: "1" });
+    let got = 0;
+    for (const pg of state.pages) {
+      const c = await renderPageImage(pg); const H = c.height;
+      const r = await wH.recognize(c, {}, { blocks: true });
+      const lines = [];
+      for (const b of r.data.blocks || []) for (const p of b.paragraphs || []) for (const ln of p.lines || []) { const tx = ln.text.replace(/\s+/g, ""); if (tx && ln.confidence >= 30) lines.push({ text: tx, x: ln.bbox.x0, w: ln.bbox.x1 - ln.bbox.x0, y: H - ln.bbox.y0, h: ln.bbox.y1 - ln.bbox.y0 }); }
+      // 画像座標（上原点）→ PDF 座標（下原点）に直してから nearby に通す。y はテキストの下端になるよう y0 を使う
+      const items = lines.map((l) => ({ text: l.text, x: l.x, w: l.w, y: l.y - l.h, h: l.h }));
+      state.ocr.lines[pg.n] = items;
+      for (const f of state.fields) if (f.page === pg.n) { const add = nearby(f, items, true); if (add.length) { f.fragments = [...new Set([...f.fragments, ...add])].slice(0, 6); got++; } }
+      // 断片が無い欄は、縦書きの見出し（左の帯）を jpn_vert で読む（PSM 5・逆順で返るので両方持つ）
+      const need = state.fields.filter((f) => f.page === pg.n && f.type === "text" && !f.fragments.length);
+      if (need.length) {
+        const wV = await T.createWorker("jpn_vert", 1, opts); await wV.setParameters({ tessedit_pageseg_mode: "5" });
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        let vi = 0;
+        for (const f of need) {
+          vi++; status(t("ocrRun", { p: Math.round(100 * vi / need.length) }) + " (縦)", 0);
+          const top = H - f.rect.y - f.rect.h; const left = clamp(Math.round(f.rect.x - 260), 0, c.width - 8), width = clamp(Math.round(f.rect.x - 4) - left, 8, c.width), y0 = clamp(Math.round(top - 30), 0, H - 8), height = clamp(Math.round(f.rect.h + 60), 8, H - y0);
+          try { const v = await wV.recognize(c, { rectangle: { left, top: y0, width, height } }); const vt = v.data.text.replace(/\s+/g, ""); if (vt.length >= 2 && v.data.confidence >= 40) { f.fragments = [vt, [...vt].reverse().join("")]; got++; } } catch (_) {}
+        }
+        await wV.terminate();
+      }
+    }
+    await wH.terminate(); state.ocr.loaded = true;
+    status(t("ocrDone", { n: got }), 4000); $("#btn-jev").disabled = !state.fields.some((f) => f.type === "text" && f.fragments.length); refreshOverlay();
+  } catch (e) { status(t("loadFail", { err: e.message }), 6000); $("#btn-ocr").disabled = false; }
+}
+
+/* ───────── Jev（中継経由）───────── */
+$("#btn-jev").addEventListener("click", () => {
+  const rows = $("#send-rows"); rows.innerHTML = "";
+  for (const f of state.fields.filter((f) => f.type === "text" && f.fragments.length)) { const tr = document.createElement("tr"); const a = document.createElement("td"); a.className = "mono"; a.textContent = `${f.id} · p${f.page} · ${Math.round(f.rect.w)}×${Math.round(f.rect.h)}${f.multiline ? " · multi" : ""}`; const b = document.createElement("td"); b.textContent = f.fragments.join(" / "); tr.append(a, b); rows.appendChild(tr); }
+  $("#send-keys").textContent = state.profile.map((x) => x.desc || x.label || x.key).filter(Boolean).join(" · ");
+  $("#dlg-send").showModal();
+});
+$("#send-cancel").addEventListener("click", () => $("#dlg-send").close());
+$("#send-go").addEventListener("click", async () => { $("#dlg-send").close(); await runJev(); });
+async function runJev() {
+  const fields = state.fields.filter((f) => f.type === "text" && f.fragments.length).map((f) => ({ id: f.id, page: f.page, fragments: f.fragments, w: Math.round(f.rect.w), h: Math.round(f.rect.h), multiline: !!f.multiline }));
+  const keys = state.profile.filter((x) => (x.label || "").trim()).map((x) => ({ key: x.key, label: (x.desc || x.label).trim() })); // Jev には別名つきの説明を渡す（画面の名前は短いまま）
+  if (!fields.length || !keys.length) return;
+  try {
+    status(t("jevBusy"), 0); $("#btn-jev").disabled = true;
+    const title = (state.pages[0]?.texts.slice(0, 3).map((x) => x.text).join(" ") || state.ocr.lines[1]?.slice(0, 2).map((x) => x.text).join(" ") || state.name).slice(0, 120);
+    const res = await fetch(MAP_ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ v: 1, title, keys, fields }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.disabled) { state.jevDisabled = data.reason || `HTTP ${res.status}`; status(t("jevOff", { r: state.jevDisabled }), 7000); return; }
+    for (const f of state.fields) { const a = data.answers && data.answers[f.id]; if (!a || f.src === "manual" || f.src === "preset") continue; const choice = a.choice; const p = Number(a.probabilities && a.probabilities[choice]) || 0; if (choice && choice !== "none" && p >= T_MID && state.profile.some((x) => x.key === choice)) { f.key = choice; f.p = p; f.src = "jev"; } else { f.key = null; f.p = p; f.src = ""; } }
+    refreshOverlay(); status(statsText(), 5000); $("#btn-fill").disabled = false;
+  } catch (e) { status(t("jevOff", { r: e.message }), 7000); }
+  finally { $("#btn-jev").disabled = false; }
+}
+
+/* ───────── 記入して保存 ───────── */
+async function loadFont(urls) { let last = null; for (const u of urls) { try { const r = await fetch(u); if (!r.ok) throw new Error(`font ${r.status}`); return await r.arrayBuffer(); } catch (e) { last = e; } } throw last || new Error("font"); }
+async function fontFor(text) { if (!state.fontBytes) { state.fontBytes = await loadFont(FONT_URLS); state.fk = fontkit.create(new Uint8Array(state.fontBytes)); } const missing = [...text].some((ch) => { const cp = ch.codePointAt(0); return cp > 0x20 && !state.fk.hasGlyphForCodePoint(cp); }); if (missing) { if (!state.fontFull) state.fontFull = await loadFont([FONT_FULL_URL]); return state.fontFull; } return state.fontBytes; }
+const isAscii = (s) => /^[\x20-\x7e]*$/.test(s);
+$("#btn-fill").addEventListener("click", fillAndSave);
+async function fillAndSave() {
+  try {
+    const todo = state.fields.filter((f) => (f.type === "text" && f.key && valueOf(f)) || (f.type === "check" && f.checked));
+    if (!todo.length) { status(t("nothing"), 4000); return; }
+    status(t("building"), 0);
+    const doc = await PDFDocument.load(state.bytes, { ignoreEncryption: true, updateMetadata: false }); doc.registerFontkit(fontkit);
+    const allText = todo.filter((f) => f.type === "text").map(valueOf).join("");
+    const font = allText && !isAscii(allText) ? await doc.embedFont(await fontFor(allText), { subset: true }) : null; // 描くものがあるときだけ埋め込む
+    const widgets = todo.filter((f) => !f.virtual), virtuals = todo.filter((f) => f.virtual);
+    if (widgets.length) {
+      const form = doc.getForm();
+      for (const f of widgets) { try { if (f.type === "check") form.getCheckBox(f.name).check(); else form.getTextField(f.name).setText(valueOf(f)); } catch (_) {} }
+      if (font) form.updateFieldAppearances(font); else form.updateFieldAppearances();
+      form.flatten({ updateFieldAppearances: false });
+    }
+    if (virtuals.length) {
+      const helv = font || (await doc.embedFont(PDFLib.StandardFonts.Helvetica));
+      for (const f of virtuals) { const pg = doc.getPage(f.page - 1); const v = valueOf(f); const size = Math.min(12, f.rect.h * 0.6); pg.drawText(v, { x: f.rect.x + 6, y: f.rect.y + (f.rect.h - size) / 2 + 1, size, font: helv }); }
+    }
+    const out = await doc.save();
+    const blob = new Blob([out], { type: "application/pdf" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = state.name.replace(/\.pdf$/i, "") + "_filled.pdf"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+    status(t("saved", { n: todo.length }), 4000);
+  } catch (e) { status(t("loadFail", { err: e && e.message ? e.message : e }), 7000); }
+}
+
+/* ───────── 起動 ───────── */
+$("#btn-lang").addEventListener("click", () => { lang = lang === "ja" ? "en" : "ja"; try { localStorage.setItem("gf-lang", lang); } catch (_) {} applyLang(); refreshOverlay(); });
+loadProfile(); applyLang();
+window.GF = { state, version: VERSION, openFile, runJev, runOcr, fillAndSave, nearby, classify };
+</script>
+</body>
+</html>

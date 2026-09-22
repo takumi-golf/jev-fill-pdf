@@ -3,9 +3,11 @@
 **Fill Japanese PDF forms (申請書・届出書) in one click, with [Jev](https://typesafe.ai) by TypeSafe AI.**
 Labels go to Jev. Your values never leave the browser.
 
-> **Status: building in public.** The app is not published yet. What *is* here today: the design, and scripts that reproduce every fact below on a real government form. Follow the repo for the first release.
+**Live: [ilove-ai.net/fill](https://ilove-ai.net/fill)** · v0.1.1 · The client is one HTML file (`index.html`); the only server code is the small relay in `api/`.
 
 [日本語はこちら](#日本語)
+
+<img src="docs/social-preview.png" width="880" alt="jev-fill-pdf">
 
 ## Why
 
@@ -23,7 +25,26 @@ Jev is the missing piece: a model that returns **a choice with probabilities** i
 
 Jev is reached through **Vercel AI Gateway** (`typesafe-ai/jev`), which declares `zdr: "all"` and `no_training: "all"` for this model, so the whole path is zero-retention. No TypeSafe account is needed on the server side.
 
-## Verified so far (real form: 国税庁 個人事業の開業・廃業等届出書, r06)
+## How it works
+
+1. Drop a form. If it is encrypted (most 国税庁 forms are, "no changes allowed" with an empty user password) it is decrypted in the browser with qpdf-wasm.
+2. Fields are found: AcroForm widgets, or, for line-only forms, closed vector paths (pdf.js expands `re` into moveTo/lineTo under a CTM, so the CTM is tracked).
+3. Text near each field is collected from the text layer, or, for image-only forms, from OCR (tesseract.js, loaded only after you press the button: `jpn` over the page, `jpn_vert` for the tall row headers, which come back reversed and are sent both ways).
+4. **A dialog shows exactly what will be sent** (fragments + your item names). Nothing goes out until you click.
+5. The relay asks Jev one `choice` per field in a single request. Probability ≥ 0.8 fills (green), 0.5–0.8 fills and asks you to check (yellow), below that stays blank and you tap to pick (grey).
+6. Fill and save: AcroForm fields are set and flattened; line-only forms get text placed inside the boxes. Nothing is embedded unless something is drawn.
+
+A form's **fingerprint** (field names and positions, rounded) keys both the shipped presets and the mappings you confirm by hand. Bytes are not usable as a key: qpdf's decrypted output differs on every run.
+
+## Measured
+
+| | Result |
+|---|---|
+| 国税庁 開業届 (r06) in headless Chromium | 79 fields, decrypted automatically. OCR 30 s. 47 of 62 text fields get nearby text. The review dialog contains no values (tested). Confirmed mappings store keys only (tested). |
+| Preset path (same form) | 25 fields filled with **zero** relay calls; derived values right (1989-04-01 → 平成 1 年 4 月 1 日, 03-1234-5678 → 03 / 1234 / 5678) |
+| Live Jev through the production relay | 10 OCR-noisy fields, 1.4 s. Plain item names: 7/10 agree, but 納税地 was confidently mistaken for 税務署名 (0.89 → would fill). With aliases in the descriptions (住所（納税地・住所地・所在地）…): 6/10 agree, **0 confident mistakes** (the same field drops to 0.56 → "please check"). We ship the aliases: green must be trustworthy. |
+
+## Verified on the way (real form: 国税庁 個人事業の開業・廃業等届出書, r06)
 
 | Fact | Result |
 |---|---|
@@ -70,7 +91,7 @@ MIT License.
 
 **様式のPDFを放り込むと、自分の情報が全部の欄に入る。** TypeSafe AI の Jev を使います。
 
-> **いま作っている途中です。** アプリはまだ公開していません。ここにあるのは設計と、下の事実を実物の様式で再現できるスクリプトです。
+**公開中: [ilove-ai.net/fill](https://ilove-ai.net/fill)** · v0.1.1 · クライアントは HTML 1 ファイル（`index.html`）。サーバー側は `api/` の薄い中継だけ。
 
 ### なぜ Jev か
 
@@ -88,7 +109,24 @@ Jev は文章を返さず、**選択肢と確率**を返すモデルです。欄
 
 Jev は **Vercel AI Gateway** 経由で呼びます。この経路はモデル一覧で「保持なし・学習不使用」と宣言されています。
 
-### 実物で確かめたこと（国税庁「個人事業の開業・廃業等届出書」r06）
+### 使い方
+
+1. 様式のPDFを放り込む。暗号化されていれば（国税庁の様式の多くがそう）ブラウザの中で外す
+2. 欄を見つける。入力欄があればそれ、線だけの様式なら枠
+3. 欄の近くの文字を集める。画像の様式ならボタンを押したときだけ文字の読み取り部品（約10MB）を読み込む
+4. **送るものを一覧で見せる。** 押すまで送らない
+5. Jev が欄ごとに「どの項目か」と確率を返す。0.8以上は入れて緑、0.5〜0.8は入れて黄色で確認、それ未満は空欄でタップして選ぶ
+6. 記入して保存
+
+### 実測
+
+| | 結果 |
+|---|---|
+| 開業届（r06）・headless Chromium | 79欄・暗号化は自動で外す・OCR 30秒・62の文字欄のうち47に近くの文字。確認ダイアログに値は含まれない（テスト済み）。手で選んだ対応はキーだけ保存（テスト済み） |
+| プリセット経路（同じ様式） | 25欄が**中継の呼び出し0回**で埋まる。分割も正しい（1989-04-01 → 平成1年4月1日、03-1234-5678 → 03 / 1234 / 5678） |
+| 本番の中継経由で Jev | 崩れたOCR断片10欄・1.4秒。項目名だけだと一致 7/10 だが「納税地」を税務署名と 0.89 で取り違えて自動記入になる。説明に別名を添えると一致 6/10・**確信して間違える欄 0**（同じ欄は 0.56 の「確認して」に落ちる）。緑が信じられることを優先して別名を採用 |
+
+### 途中で確かめたこと（国税庁「個人事業の開業・廃業等届出書」r06）
 
 | 確認 | 結果 |
 |---|---|

@@ -1,0 +1,16 @@
+{
+  "title": "個人事業の開業・廃業等届出書（令和6年様式・NTA1K0Z060010040）",
+  "source": "https://www.nta.go.jp/taxes/tetsuzuki/shinsei/annai/shinkoku/pdf/r06/05.pdf",
+  "note": "欄名 → プロフィールの項目。派生キー: .y/.m/.d（年月日）.era/.ey（元号・元号年）.1/.2/.3（ハイフン区切り）。届出の区分・所得の種類などの判断が要る欄と、税理士・法人・給与の欄は対象外（手で入れる）",
+  "map": {
+    "テキスト1": "today.y", "テキスト2": "today.m", "テキスト3": "today.d",
+    "テキスト4": "taxoffice", "テキスト5": "mynumber",
+    "テキスト6": "kana", "テキスト12": "name",
+    "テキスト7": "birth.era", "テキスト8": "birth.ey", "テキスト9": "birth.m", "テキスト10": "birth.d",
+    "テキスト11": "shopkana", "テキスト47": "shop", "テキスト48": "job",
+    "テキスト50": "tel.1", "テキスト51": "tel.2", "テキスト52": "tel.3",
+    "テキスト53": "zip.1", "テキスト54": "zip.2", "テキスト55": "address",
+    "テキスト35": "start.era", "テキスト36": "start.ey", "テキスト37": "start.m", "テキスト38": "start.d",
+    "テキスト27": "summary"
+  }
+}
